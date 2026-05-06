@@ -564,6 +564,16 @@ public class Schema : MetadataProvider, ISchema, IServiceProvider, IDisposable
                 ExamineType(inputType, completed, inProcess, ref inputTypesCheckedForCycles);
         }
 
+        static IGraphType? GetNamedTypeNoError(IGraphType? graphType)
+        {
+            return graphType switch
+            {
+                NonNullGraphType nonNull => GetNamedTypeNoError(nonNull.ResolvedType),
+                ListGraphType list => GetNamedTypeNoError(list.ResolvedType),
+                _ => graphType
+            };
+        }
+
         static void ExamineType(IInputObjectGraphType inputType, HashSet<IInputObjectGraphType> completed, Stack<FieldType> inProcess, ref HashSet<IInputObjectGraphType>? inputTypesCheckedForCycles)
         {
             if (completed.Contains(inputType))
@@ -571,10 +581,10 @@ public class Schema : MetadataProvider, ISchema, IServiceProvider, IDisposable
 
             foreach (var field in inputType.Fields)
             {
-                if (field.DefaultValue is not GraphQLValue defaultValue)
-                    continue;
+                var baseType = GetNamedTypeNoError(field.ResolvedType);
+                if (baseType == null)
+                    continue; // Schema validation will catch this at a later point
 
-                var baseType = field.ResolvedType!.GetNamedType();
                 if (baseType is IInputObjectGraphType inputFieldType)
                 {
                     if (inProcess.Contains(field))
@@ -598,7 +608,9 @@ public class Schema : MetadataProvider, ISchema, IServiceProvider, IDisposable
                     ExamineType(inputFieldType, completed, inProcess, ref inputTypesCheckedForCycles);
                     inProcess.Pop();
                 }
-                field.DefaultValue = Execution.ExecutionHelper.CoerceValue(field.ResolvedType!, defaultValue).Value;
+
+                if (field.DefaultValue is GraphQLValue defaultValue)
+                    field.DefaultValue = Execution.ExecutionHelper.CoerceValue(field.ResolvedType!, defaultValue).Value;
             }
 
             completed.Add(inputType);
